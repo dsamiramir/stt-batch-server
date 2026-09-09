@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STT 배치 서버</title>
+<style>
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --panel-2: #f0f2f5;
+  --line: #dfe3e8;
+  --ink: #14181d;
+  --ink-2: #5b6672;
+  --ink-3: #8b95a1;
+  --accent: #2f6feb;
+  --ok: #1a7f4b;
+  --ok-bg: #e3f5ec;
+  --warn: #9a6400;
+  --warn-bg: #fdf1da;
+  --run: #1e5fbd;
+  --run-bg: #e2ecfd;
+  --err: #b3261e;
+  --err-bg: #fbe6e4;
+  --mute: #6b7280;
+  --mute-bg: #eceef1;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.10);
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216;
+    --panel: #171b21;
+    --panel-2: #1e242c;
+    --line: #2a323c;
+    --ink: #e7ecf2;
+    --ink-2: #9aa7b5;
+    --ink-3: #6b7887;
+    --accent: #4f8cff;
+    --ok: #55d6a0;
+    --ok-bg: #10301f;
+    --warn: #e0ac4a;
+    --warn-bg: #33270f;
+    --run: #6ba6ff;
+    --run-bg: #12233d;
+    --err: #ff8f85;
+    --err-bg: #3a1815;
+    --mute: #8b95a1;
+    --mute-bg: #232931;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216; --panel: #171b21; --panel-2: #1e242c; --line: #2a323c;
+  --ink: #e7ecf2; --ink-2: #9aa7b5; --ink-3: #6b7887; --accent: #4f8cff;
+  --ok: #55d6a0; --ok-bg: #10301f; --warn: #e0ac4a; --warn-bg: #33270f;
+  --run: #6ba6ff; --run-bg: #12233d; --err: #ff8f85; --err-bg: #3a1815;
+  --mute: #8b95a1; --mute-bg: #232931; --shadow: 0 1px 2px rgba(0,0,0,.4);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px 18px 60px; }
+
+/* ---- header ---- */
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+h1 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -.01em; }
+.host { font: 12px var(--mono); color: var(--ink-3); }
+.spacer { flex: 1; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mute); flex: none; }
+.dot.live { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+.dot.down { background: var(--err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 22%, transparent); }
+.conn { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-2); }
+
+/* ---- cards ---- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 15px; box-shadow: var(--shadow); min-width: 0;
+}
+.card h2 {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--ink-3); margin: 0 0 9px;
+}
+.big { font-size: 21px; font-weight: 650; letter-spacing: -.02em; line-height: 1.25; }
+.sub { font-size: 12.5px; color: var(--ink-2); margin-top: 5px; word-break: break-word; }
+.sub.mono { font-family: var(--mono); font-size: 11.5px; }
+
+/* ---- meter ---- */
+.meter { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin-top: 9px; }
+.meter > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s ease; }
+.meter.warm > i { background: var(--warn); }
+.meter.hot > i { background: var(--err); }
+
+/* ---- timeline ---- */
+.tl-card { grid-column: 1 / -1; }
+.tl { position: relative; height: 30px; border-radius: 6px; background: var(--panel-2); overflow: hidden; }
+.tl-seg { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--ok) 34%, transparent); }
+.tl-now { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--err); z-index: 2; }
+.tl-now::after {
+  content: ""; position: absolute; top: -3px; left: -3px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--err);
+}
+.tl-ticks { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--ink-3); margin-top: 5px; }
+
+/* ---- buttons ---- */
+.bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0 12px; }
+button, .btn {
+  font: inherit; font-size: 13px; font-weight: 500; padding: 7px 13px;
+  border-radius: 7px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--ink); cursor: pointer; transition: background .12s, border-color .12s;
+}
+button:hover:not(:disabled), .btn:hover { background: var(--panel-2); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+button.danger { color: var(--err); }
+button.tiny { padding: 4px 9px; font-size: 12px; }
+
+/* ---- drop zone ---- */
+.drop {
+  border: 1.5px dashed var(--line); border-radius: var(--radius); padding: 18px;
+  text-align: center; color: var(--ink-2); font-size: 13px; background: var(--panel);
+  transition: border-color .15s, background .15s; cursor: pointer;
+}
+.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+.drop b { color: var(--ink); font-weight: 600; }
+.up-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; margin-top: 8px; }
+.up-row .meter { flex: 1; margin: 0; }
+
+/* ---- table ---- */
+.tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--ink-3); padding: 10px 12px;
+  border-bottom: 1px solid var(--line); background: var(--panel-2); white-space: nowrap;
+}
+td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--panel-2); }
+.fname { font-weight: 500; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref { font: 11px var(--mono); color: var(--ink-3); }
+.num { font-family: var(--mono); font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.empty { padding: 40px 16px; text-align: center; color: var(--ink-3); }
+
+/* ---- pills ---- */
+.pill {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 600; white-space: nowrap;
+}
+.pill.queued { background: var(--warn-bg); color: var(--warn); }
+.pill.running { background: var(--run-bg); color: var(--run); }
+.pill.canceling { background: var(--run-bg); color: var(--run); }
+.pill.done { background: var(--ok-bg); color: var(--ok); }
+.pill.failed { background: var(--err-bg); color: var(--err); }
+.pill.canceled { background: var(--mute-bg); color: var(--mute); }
+
+.prog { min-width: 128px; }
+.prog .meter { margin: 0; }
+.stage { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+
+/* ---- modal ---- */
+.veil {
+  position: fixed; inset: 0; background: rgba(8,11,15,.55); z-index: 50;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  width: min(780px, 100%); max-height: 84vh; display: flex; flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0,0,0,.3);
+}
+.modal header { padding: 14px 16px; border-bottom: 1px solid var(--line); margin: 0; }
+.modal .body { padding: 16px; overflow: auto; }
+.line { display: flex; gap: 10px; padding: 6px 0; align-items: baseline; }
+.line .t { font: 11px var(--mono); color: var(--ink-3); flex: none; }
+.line .who { font-size: 12px; font-weight: 650; flex: none; min-width: 76px; }
+.line .txt { flex: 1; }
+.who.c0 { color: var(--accent); }
+.who.c1 { color: var(--ok); }
+.who.c2 { color: var(--warn); }
+.who.c3 { color: var(--err); }
+.meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-bottom: 12px; }
+pre.err {
+  background: var(--err-bg); color: var(--err); padding: 10px 12px; border-radius: 7px;
+  font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; margin: 0;
+}
+/* ---- settings form ---- */
+.fset { border: 1px solid var(--line); border-radius: 9px; padding: 10px 14px 14px; margin: 0 0 12px; }
+.fset > legend { font-size: 12px; font-weight: 650; padding: 0 6px; color: var(--ink-2); }
+.frow { display: flex; align-items: center; gap: 10px; padding: 7px 0; flex-wrap: wrap; }
+.frow > .lbl { flex: 1; min-width: 160px; font-size: 13px; }
+.frow > .hint { flex-basis: 100%; font-size: 11.5px; color: var(--ink-3); }
+.frow.off > .lbl, .frow.off > .hint { opacity: .45; }
+input[type=number], input[type=text], textarea {
+  font: inherit; font-size: 13px; padding: 6px 9px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+}
+input[type=number] { width: 104px; }
+input:disabled, textarea:disabled { opacity: .45; cursor: not-allowed; }
+textarea { flex-basis: 100%; min-height: 58px; font-family: var(--mono); font-size: 12px; resize: vertical; }
+
+/* toggle switch */
+.sw { position: relative; width: 38px; height: 21px; flex: none; }
+.sw > input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.sw > span {
+  position: absolute; inset: 0; border-radius: 999px; background: var(--line);
+  transition: background .15s; pointer-events: none;
+}
+.sw > span::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 15px; height: 15px;
+  border-radius: 50%; background: #fff; transition: transform .15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3);
+}
+.sw > input:checked + span { background: var(--accent); }
+.sw > input:checked + span::after { transform: translateX(17px); }
+
+.notebox { border-radius: 7px; padding: 9px 12px; font-size: 12.5px; margin-bottom: 12px; }
+.notebox.warn { background: var(--warn-bg); color: var(--warn); }
+.notebox.info { background: var(--run-bg); color: var(--run); }
+.notebox.hide { display: none; }
+.modal > footer {
+  padding: 12px 16px; border-top: 1px solid var(--line);
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 8px;
+  font-size: 13px; z-index: 90; box-shadow: 0 4px 16px rgba(0,0,0,.25);
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>STT 배치 서버</h1>
+    <span class="host" id="host"></span>
+    <span class="spacer"></span>
+    <span class="conn"><span class="dot" id="dot"></span><span id="connTxt">연결 중…</span></span>
+    <button class="tiny" id="themeBtn" title="테마 전환">◐</button>
+  </header>
+
+  <div class="cards">
+    <div class="card">
+      <h2>게이트</h2>
+      <div class="big" id="gateVal">—</div>
+      <div class="sub" id="gateReason"></div>
+    </div>
+    <div class="card">
+      <h2>GPU</h2>
+      <div class="big" id="gpuVal">—</div>
+      <div class="meter" id="gpuMeter"><i style="width:0"></i></div>
+      <div class="sub mono" id="gpuSub"></div>
+    </div>
+    <div class="card">
+      <h2>모델</h2>
+      <div class="big" id="modelVal">—</div>
+      <div class="sub" id="modelSub"></div>
+    </div>
+    <div class="card">
+      <h2>큐</h2>
+      <div class="big" id="queueVal">—</div>
+      <div class="sub" id="queueSub"></div>
+    </div>
+
+    <div class="card tl-card">
+      <h2>오늘의 오프피크 창 <span id="tlNote" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div class="tl" id="tl"></div>
+      <div class="tl-ticks">
+        <span>00</span><span>03</span><span>06</span><span>09</span><span>12</span>
+        <span>15</span><span>18</span><span>21</span><span>24</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <button class="primary" id="runNow">지금 실행 (60분)</button>
+    <button id="restore">스케줄 복귀</button>
+    <button id="pauseBtn">일시정지</button>
+    <button id="settingsBtn">설정</button>
+    <span class="spacer"></span>
+    <label class="conn"><input type="checkbox" id="autoRefresh" checked> 자동 새로고침</label>
+  </div>
+
+  <div class="drop" id="drop">
+    <b>오디오 파일을 여기에 끌어다 놓거나 클릭</b>해서 큐에 넣습니다<br>
+    <span style="font-size:12px">멀티채널 그대로 올리면 채널별로 전사합니다 · 채널 라벨은 서버 기본값(agent, customer)</span>
+    <input type="file" id="file" multiple accept="audio/*,video/*,.wav,.mp3,.m4a,.flac,.ogg,.opus,.mp4,.mkv" hidden>
+    <div id="upRows"></div>
+  </div>
+
+  <div class="bar"><strong style="font-size:13px">잡 목록</strong></div>
+
+  <div class="tablewrap">
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>파일</th><th>상태</th><th>진행</th><th>길이</th><th>채널</th><th>속도</th><th>제출</th><th></th>
+        </tr></thead>
+        <tbody id="rows"><tr><td colspan="8" class="empty">불러오는 중…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const API = location.origin;
+const $ = (id) => document.getElementById(id);
+const TERMINAL = new Set(["done", "failed", "canceled"]);
+let apiKey = localStorage.getItem("stt_api_key") || "";
+let paused = false;
+let modalJob = null;
+
+/* ---------- theme ---------- */
+(function initTheme() {
+  const saved = localStorage.getItem("stt_theme");
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+  $("themeBtn").onclick = () => {
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    const cur = document.documentElement.getAttribute("data-theme") || (dark ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("stt_theme", next);
+  };
+})();
+
+/* ---------- http ---------- */
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  if (apiKey) headers["x-api-key"] = apiKey;
+  const res = await fetch(API + path, Object.assign({}, opts, { headers }));
+  if (res.status === 401) {
+    const k = prompt("API 키가 필요합니다:");
+    if (k) { apiKey = k; localStorage.setItem("stt_api_key", k); return api(path, opts); }
+    throw new Error("인증 실패");
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (e) { /* 본문이 JSON이 아님 */ }
+    throw new Error(`${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
+let toastTimer = null;
+function toast(msg) {
+  document.querySelectorAll(".toast").forEach((n) => n.remove());
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.body.appendChild(el);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.remove(), 3200);
+}
+
+/* ---------- formatting ---------- */
+const pad = (n) => String(n).padStart(2, "0");
+
+function hhmmss(sec) {
+  if (sec == null) return "—";
+  const s = Math.round(sec);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+}
+
+function etaText(sec) {
+  if (sec == null) return "";
+  if (sec < 60) return "1분 이내";
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h ? `약 ${h}시간 ${m}분` : `약 ${m}분`;
+}
+
+function ago(iso) {
+  if (!iso) return "—";
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return "방금";
+  if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+  return `${Math.floor(diff / 86400)}일 전`;
+}
+
+function until(iso) {
+  if (!iso) return "";
+  const diff = (new Date(iso).getTime() - Date.now()) / 1000;
+  if (diff <= 0) return "";
+  const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60);
+  return h ? `${h}시간 ${m}분 후` : `${m}분 후`;
+}
+
+/* ---------- off-peak timeline ---------- */
+const DAYS = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
+
+// 서버의 STT_WINDOWS 와 같은 문법을 파싱한다: "<요일> <HH:MM>-<HH:MM>", 요일 생략 시 매일.
+function parseWindow(raw) {
+  const m = raw.trim().match(/^(?:(.+?)\s+)?(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const days = new Set();
+  const token = (m[1] || "*").toLowerCase();
+  if (["*", "all", "daily", "everyday", "any"].includes(token)) {
+    for (let i = 0; i < 7; i++) days.add(i);
+  } else {
+    for (const part of token.split(",")) {
+      const p = part.trim();
+      if (p.includes("-")) {
+        const [a, b] = p.split("-").map((x) => DAYS[x.trim().slice(0, 3)]);
+        if (a == null || b == null) return null;
+        for (let i = a; ; i = (i + 1) % 7) { days.add(i); if (i === b) break; }
+      } else {
+        const d = DAYS[p.slice(0, 3)];
+        if (d == null) return null;
+        days.add(d);
+      }
+    }
+  }
+  const startMin = +m[2] * 60 + +m[3];
+  const endRaw = +m[4] * 60 + +m[5];
+  // 끝이 시작보다 작거나 같으면 자정을 넘긴 것. 24:00 은 그날의 끝.
+  let dur = endRaw - startMin;
+  if (+m[4] === 24) dur = 1440 - startMin;
+  else if (dur <= 0) dur += 1440;
+  return { days, startMin, dur };
+}
+
+function renderTimeline(windows) {
+  const tl = $("tl");
+  tl.innerHTML = "";
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const pyDay = (d) => (d.getDay() + 6) % 7; // JS 일=0 → 파이썬 월=0
+
+  for (const raw of windows || []) {
+    const w = parseWindow(raw);
+    if (!w) continue;
+    for (const off of [-1, 0]) {
+      const day = new Date(midnight + off * 86400000);
+      if (!w.days.has(pyDay(day))) continue;
+      const s = day.getTime() + w.startMin * 60000;
+      const e = s + w.dur * 60000;
+      const lo = Math.max(s, midnight), hi = Math.min(e, midnight + 86400000);
+      if (hi <= lo) continue;
+      const seg = document.createElement("div");
+      seg.className = "tl-seg";
+      seg.style.left = ((lo - midnight) / 86400000 * 100) + "%";
+      seg.style.width = ((hi - lo) / 86400000 * 100) + "%";
+      tl.appendChild(seg);
+    }
+  }
+  const marker = document.createElement("div");
+  marker.className = "tl-now";
+  marker.style.left = ((now.getTime() - midnight) / 86400000 * 100) + "%";
+  marker.title = "지금";
+  tl.appendChild(marker);
+}
+
+/* ---------- status cards ---------- */
+function renderHealth(h) {
+  const g = h.gate;
+  const openNow = g.accepting_work;
+  $("gateVal").textContent = openNow ? "처리 중" : "대기 중";
+  $("gateVal").style.color = openNow ? "var(--ok)" : "var(--warn)";
+
+  let reason = g.reason;
+  if (!openNow && g.next_window_at) {
+    const u = until(g.next_window_at);
+    if (u) reason += ` (${u})`;
+  }
+  if (g.override_until) reason += " · 수동 오버라이드 중";
+  $("gateReason").textContent = reason;
+
+  paused = g.paused;
+  $("pauseBtn").textContent = paused ? "재개" : "일시정지";
+
+  if (h.gpu) {
+    const usedPct = Math.round((h.gpu.memory_used_mb / h.gpu.memory_total_mb) * 100);
+    $("gpuVal").innerHTML = h.gpu.utilization_pct +
+      '%<span style="font-size:12px;color:var(--ink-3);font-weight:500"> 사용률</span>';
+    const meter = $("gpuMeter");
+    meter.className = "meter" + (usedPct > 85 ? " hot" : usedPct > 60 ? " warm" : "");
+    meter.firstElementChild.style.width = usedPct + "%";
+    $("gpuSub").textContent =
+      `VRAM ${(h.gpu.memory_used_mb / 1024).toFixed(1)} / ${(h.gpu.memory_total_mb / 1024).toFixed(1)} GB`;
+  } else {
+    $("gpuVal").textContent = "N/A";
+    $("gpuSub").textContent = "nvidia-smi 없음";
+  }
+
+  const m = h.model;
+  $("modelVal").textContent = m.loaded ? "로드됨" : "내려감";
+  $("modelVal").style.color = m.loaded ? "var(--ok)" : "var(--ink-3)";
+  $("modelSub").textContent = m.loaded
+    ? `${m.model_size} · ${m.device || "?"}/${m.compute_type || "?"}`
+    : `${m.model_size} · VRAM 반납 상태`;
+
+  const q = h.queue || {};
+  const waiting = (q.queued || 0) + (q.running || 0);
+  $("queueVal").textContent = waiting;
+  const eta = etaText(h.backlog_eta_seconds);
+  $("queueSub").textContent =
+    `대기 ${q.queued || 0} · 처리중 ${q.running || 0} · 완료 ${q.done || 0} · 실패 ${q.failed || 0}` +
+    (eta ? ` · 모두 끝나기까지 ${eta}` : "");
+
+  renderTimeline(g.windows);
+  $("tlNote").textContent = g.schedule_enabled ? "" : "· 스케줄 기준이 꺼져 있어 지금은 적용되지 않습니다";
+  $("tl").style.opacity = g.schedule_enabled ? "" : ".45";
+}
+
+/* ---------- job table ---------- */
+let lastJobsSig = null;
+
+function jobsSignature(list) {
+  return JSON.stringify(list.map((j) => [
+    j.id, j.status, j.progress, j.stage, j.duration_sec, j.channels, j.rtf,
+    j.queue_position, j.eta_seconds,
+  ]));
+}
+
+function renderJobs(list, force) {
+  const sig = jobsSignature(list);
+  if (!force && sig === lastJobsSig) return;   // 변한 게 없으면 DOM 을 건드리지 않는다
+  lastJobsSig = sig;
+
+  const tbody = $("rows");
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">아직 제출된 잡이 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  for (const j of list) {
+    const tr = document.createElement("tr");
+    if (j.status === "done" || j.status === "failed") tr.className = "clickable";
+
+    const pct = Math.round((j.progress || 0) * 100);
+    const showBar = j.status === "running" || j.status === "canceling";
+
+    tr.innerHTML = `
+      <td>
+        <div class="fname" title="${esc(j.filename)}">${esc(j.filename)}</div>
+        ${j.client_ref ? `<div class="ref">${esc(j.client_ref)}</div>` : ""}
+        ${j.audio_deleted_at ? `<div class="ref" title="${esc(j.audio_deleted_at)}">원본 삭제됨</div>` : ""}
+      </td>
+      <td><span class="pill ${j.status}">${statusKo(j.status)}</span></td>
+      <td class="prog">
+        ${showBar
+          ? `<div class="meter"><i style="width:${pct}%"></i></div>
+             <div class="stage">${pct}% ${esc(j.stage || "")}</div>`
+          : j.status === "queued" && j.queue_position
+          ? `<span class="num">${j.queue_position}번째</span>
+             ${j.eta_seconds ? `<div class="stage">${etaText(j.eta_seconds)}</div>` : ""}`
+          : `<span class="num">${j.status === "done" ? "100%" : "—"}</span>`}
+      </td>
+      <td class="num">${hhmmss(j.duration_sec)}</td>
+      <td class="num">${j.channels ?? "—"}</td>
+      <td class="num">${j.rtf ? (1 / j.rtf).toFixed(1) + "×" : "—"}</td>
+      <td class="num">${ago(j.created_at)}</td>
+      <td></td>`;
+
+    const actions = tr.lastElementChild;
+    if (j.status === "done") {
+      actions.appendChild(mkBtn("결과", "tiny", (e) => { e.stopPropagation(); openResult(j); }));
+    } else if (j.status === "failed") {
+      actions.appendChild(mkBtn("오류", "tiny danger", (e) => { e.stopPropagation(); openError(j); }));
+    } else if (!TERMINAL.has(j.status)) {
+      actions.appendChild(mkBtn("취소", "tiny danger", (e) => { e.stopPropagation(); cancelJob(j.id); }));
+    }
+    if (tr.className === "clickable") {
+      tr.onclick = () => (j.status === "done" ? openResult(j) : openError(j));
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+function mkBtn(label, cls, onClick) {
+  const b = document.createElement("button");
+  b.className = cls;
+  b.textContent = label;
+  b.onclick = onClick;
+  return b;
+}
+
+function statusKo(s) {
+  return { queued: "대기", running: "처리중", canceling: "취소중",
+           done: "완료", failed: "실패", canceled: "취소됨" }[s] || s;
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+async function cancelJob(id) {
+  try { await api(`/v1/jobs/${id}`, { method: "DELETE" }); toast("취소 요청을 보냈습니다"); refresh(); }
+  catch (e) { toast("취소 실패: " + e.message); }
+}
+
+/* ---------- modal ---------- */
+function removeVeils() {
+  document.querySelectorAll(".veil").forEach((n) => n.remove());
+}
+
+function closeModal() {
+  modalJob = null;
+  removeVeils();
+}
+
+// 내용만 갈아끼운다. closeModal 을 부르면 modalJob 이 지워져서
+// 뒤늦게 도착한 결과가 자기 모달을 못 알아보고 버려진다.
+function showModal(title, bodyHtml) {
+  removeVeils();
+  const veil = document.createElement("div");
+  veil.className = "veil";
+  veil.innerHTML =
+    `<div class="modal">
+       <header style="display:flex;align-items:center;gap:12px">
+         <h1 style="flex:1">${esc(title)}</h1>
+         <button class="tiny" data-close>닫기</button>
+       </header>
+       <div class="body">${bodyHtml}</div>
+     </div>`;
+  veil.onclick = (e) => { if (e.target === veil || e.target.dataset.close !== undefined) closeModal(); };
+  document.body.appendChild(veil);
+}
+
+async function openResult(job) {
+  modalJob = job.id;
+  showModal(job.filename, '<div class="empty">불러오는 중…</div>');
+  try {
+    const r = await api(`/v1/jobs/${job.id}/result`);
+    if (modalJob !== job.id) return;
+    const lines = (r.segments || []).map((s) => {
+      const t = hhmmss(s.start);
+      return `<div class="line">
+                <span class="t">${t}</span>
+                <span class="who c${s.channel % 4}">${esc(s.speaker)}</span>
+                <span class="txt">${esc(s.text)}</span>
+              </div>`;
+    }).join("");
+    const skipped = (r.channels || []).filter((c) => c.skipped);
+    showModal(job.filename,
+      `<div class="meta">
+         <span>언어 ${esc(r.language || "?")}</span>
+         <span>길이 ${hhmmss(r.audio.duration_sec)}</span>
+         <span>채널 ${r.audio.channels_total}</span>
+         <span>처리 ${r.processing_sec}s</span>
+       </div>
+       ${skipped.length ? `<div class="sub" style="margin-bottom:10px">무음으로 건너뛴 채널: ${
+          skipped.map((c) => esc(c.name)).join(", ")}</div>` : ""}
+       ${lines || '<div class="empty">인식된 발화가 없습니다.</div>'}`);
+  } catch (e) {
+    if (modalJob === job.id) showModal(job.filename, `<pre class="err">${esc(e.message)}</pre>`);
+  }
+}
+
+function openError(job) {
+  modalJob = null;   // 진행 중인 결과 조회가 이 모달을 덮어쓰지 않도록
+  showModal(job.filename,
+    `<div class="meta"><span>시도 ${job.attempts}회</span><span>${esc(job.finished_at || "")}</span></div>
+     <pre class="err">${esc(job.error || "사유 없음")}</pre>`);
+}
+
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+/* ---------- settings ---------- */
+function openSettings() {
+  Promise.all([api("/v1/settings"), api("/v1/health").catch(() => null)])
+    .then(([cfg, health]) => renderSettings(cfg, health && health.gpu))
+    .catch((e) => toast("설정을 불러오지 못했습니다: " + e.message));
+}
+
+function renderSettings(cfg, gpu) {
+  closeModal();
+  const veil = document.createElement("div");
+  veil.className = "veil";
+  veil.innerHTML = `
+    <div class="modal">
+      <header style="display:flex;align-items:center;gap:12px">
+        <h1 style="flex:1">설정</h1>
+        <button class="tiny" data-close>닫기</button>
+      </header>
+      <div class="body">
+        <div class="notebox hide" id="setNote"></div>
+
+        <fieldset class="fset">
+          <legend>스케줄 기준</legend>
+          <div class="frow">
+            <span class="lbl">지정한 시간창에만 처리</span>
+            <span class="sw"><input type="checkbox" id="sSched"><span></span></span>
+          </div>
+          <div class="frow" id="rowWindows">
+            <textarea id="sWindows" spellcheck="false"></textarea>
+            <span class="hint">&lt;요일&gt; &lt;HH:MM&gt;-&lt;HH:MM&gt; 을 ; 로 구분합니다.
+              끝이 시작보다 이르면 자정을 넘깁니다. 요일은 Mon-Fri / Sat,Sun / * 를 받고, 생략하면 매일입니다.</span>
+          </div>
+          <div class="frow" id="rowFinish">
+            <span class="lbl">창이 닫혀도 진행 중인 잡은 끝까지</span>
+            <span class="sw"><input type="checkbox" id="sFinish"><span></span></span>
+            <span class="hint">끄면 다음 채널 경계에서 잡을 큐로 되돌립니다.</span>
+          </div>
+        </fieldset>
+
+        <fieldset class="fset">
+          <legend>GPU 유휴 기준</legend>
+          <div class="frow">
+            <span class="lbl">GPU가 놀 때만 처리</span>
+            <span class="sw"><input type="checkbox" id="sGpu"><span></span></span>
+          </div>
+          <div class="frow" id="rowUtil">
+            <span class="lbl">최대 GPU 사용률 (%)</span>
+            <input type="number" id="sUtil" min="0" max="100" step="1">
+            <span class="hint" id="hintUtil"></span>
+          </div>
+          <div class="frow" id="rowVram">
+            <span class="lbl">최소 여유 VRAM (MB)</span>
+            <input type="number" id="sVram" min="0" max="1048576" step="256">
+            <span class="hint" id="hintVram"></span>
+          </div>
+          <div class="frow" id="rowProbe">
+            <span class="lbl">연속 확인 횟수 / 간격(초)</span>
+            <input type="number" id="sSamples" min="1" max="10" step="1">
+            <input type="number" id="sInterval" min="0.1" max="10" step="0.1">
+            <span class="hint">이 횟수만큼 연속으로 한가해야 시작합니다. 순간적인 부하에 속지 않게 해줍니다.</span>
+          </div>
+        </fieldset>
+
+        <fieldset class="fset">
+          <legend>오디오 보관</legend>
+          <div class="frow">
+            <span class="lbl">STT가 끝나면 원본 오디오 삭제</span>
+            <span class="sw"><input type="checkbox" id="sDropAudio"><span></span></span>
+            <span class="hint">전사 결과 JSON은 그대로 남습니다. 지워진 잡은 목록에 "원본 삭제됨"으로 표시됩니다.</span>
+          </div>
+          <div class="frow">
+            <span class="lbl">미완료 잡 오디오 보관 (일)</span>
+            <input type="number" id="sRetain" min="0" max="3650" step="0.5">
+            <span class="hint">대기·실패·취소처럼 전사되지 않은 잡의 오디오를 이 기간만 보관합니다.
+              0이면 지우지 않습니다. 기간이 지나면 잡은 실패로 정리됩니다.</span>
+          </div>
+          <div class="frow">
+            <span class="lbl">정리 주기 (초)</span>
+            <input type="number" id="sCleanEvery" min="0" max="86400" step="60">
+            <span class="hint">0이면 주기 정리를 끕니다.
+              <button class="tiny" type="button" id="sCleanNow">지금 정리</button></span>
+          </div>
+        </fieldset>
+
+        <fieldset class="fset">
+          <legend>기타</legend>
+          <div class="frow">
+            <span class="lbl">큐 확인 간격 (초)</span>
+            <input type="number" id="sPoll" min="1" max="300" step="1">
+            <span class="hint">큐가 비어 있으면 GPU를 확인하지 않으므로 짧게 둬도 부담은 적습니다.</span>
+          </div>
+          <div class="frow">
+            <span class="hint">재시작이 필요한 항목(${esc(cfg.restart_required_for.join(", "))})은
+              여기서 바꿀 수 없습니다. <code>${esc(cfg.env_file)}</code> 를 직접 고치고 서버를 다시 시작하세요.</span>
+          </div>
+        </fieldset>
+      </div>
+      <footer>
+        <button data-close>취소</button>
+        <button class="primary" id="sSave">저장</button>
+      </footer>
+    </div>`;
+  veil.onclick = (e) => {
+    if (e.target === veil || e.target.dataset.close !== undefined) closeModal();
+  };
+  document.body.appendChild(veil);
+
+  const el = (id) => veil.querySelector("#" + id);
+  el("sSched").checked = cfg.schedule_enabled;
+  el("sWindows").value = cfg.windows;
+  el("sFinish").checked = cfg.finish_job_outside_window;
+  el("sGpu").checked = cfg.gpu_idle_check;
+  el("sUtil").value = cfg.gpu_max_util;
+  el("sVram").value = cfg.gpu_min_free_mb;
+  el("sSamples").value = cfg.gpu_probe_samples;
+  el("sInterval").value = cfg.gpu_probe_interval_sec;
+  el("sPoll").value = cfg.poll_interval_sec;
+  el("sDropAudio").checked = cfg.delete_audio_on_success;
+  el("sRetain").value = cfg.audio_retention_days;
+  el("sCleanEvery").value = cfg.cleanup_interval_sec;
+
+  el("sCleanNow").onclick = async () => {
+    el("sCleanNow").disabled = true;
+    try {
+      const r = await api("/v1/maintenance/cleanup", { method: "POST" });
+      toast(r.deleted
+        ? `${r.deleted}개 파일 삭제, ${(r.freed_bytes / 1e6).toFixed(1)}MB 확보`
+        : "지울 오디오가 없습니다");
+      refresh();
+    } catch (e) {
+      toast("정리 실패: " + e.message);
+    } finally {
+      el("sCleanNow").disabled = false;
+    }
+  };
+
+  if (gpu) {
+    el("hintUtil").textContent = `지금 ${gpu.utilization_pct}%`;
+    el("hintVram").textContent =
+      `지금 여유 ${gpu.memory_free_mb}MB / 총 ${gpu.memory_total_mb}MB` +
+      " · 모델이 이미 올라가 있으면 이 조건은 건너뜁니다";
+  }
+
+  // Lock the inputs belonging to a gate that is off, so it stays obvious which
+  // numbers actually apply.
+  function sync() {
+    const sched = el("sSched").checked;
+    const gpuOn = el("sGpu").checked;
+    const rows = [
+      ["rowWindows", ["sWindows"], sched],
+      ["rowFinish", ["sFinish"], sched],
+      ["rowUtil", ["sUtil"], gpuOn],
+      ["rowVram", ["sVram"], gpuOn],
+      ["rowProbe", ["sSamples", "sInterval"], gpuOn],
+    ];
+    for (const [row, ids, on] of rows) {
+      el(row).classList.toggle("off", !on);
+      ids.forEach((id) => { el(id).disabled = !on; });
+    }
+
+    const note = el("setNote");
+    note.className = "notebox";
+    if (!sched && !gpuOn) {
+      note.classList.add("warn");
+      note.textContent =
+        "두 기준을 모두 끄면 잡이 들어오는 즉시 처리합니다. 낮에도 GPU를 통째로 점유하니, " +
+        "이 PC로 다른 작업을 하신다면 GPU 기준은 켜두세요.";
+    } else if (!sched) {
+      note.classList.add("info");
+      note.textContent = "시간 제한 없이, GPU가 한가해질 때마다 처리합니다. 낮에도 돕니다.";
+    } else if (!gpuOn) {
+      note.classList.add("info");
+      note.textContent = "시간창 안이면 GPU가 바빠도 처리합니다.";
+    } else {
+      note.classList.add("hide");
+    }
+  }
+  el("sSched").onchange = sync;
+  el("sGpu").onchange = sync;
+  sync();
+
+  el("sSave").onclick = async () => {
+    const num = (id) => {
+      const v = parseFloat(el(id).value);
+      return Number.isFinite(v) ? v : undefined;
+    };
+    const payload = {
+      schedule_enabled: el("sSched").checked,
+      gpu_idle_check: el("sGpu").checked,
+      finish_job_outside_window: el("sFinish").checked,
+      windows: el("sWindows").value.trim() || undefined,
+      gpu_max_util: num("sUtil"),
+      gpu_min_free_mb: num("sVram"),
+      gpu_probe_samples: num("sSamples"),
+      gpu_probe_interval_sec: num("sInterval"),
+      poll_interval_sec: num("sPoll"),
+      delete_audio_on_success: el("sDropAudio").checked,
+      audio_retention_days: num("sRetain"),
+      cleanup_interval_sec: num("sCleanEvery"),
+    };
+    // Leave blank fields to the server rather than sending nulls.
+    Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+
+    el("sSave").disabled = true;
+    try {
+      await api("/v1/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      toast("설정을 저장했습니다");
+      closeModal();
+      refresh();
+    } catch (e) {
+      toast("저장 실패: " + e.message);
+      el("sSave").disabled = false;
+    }
+  };
+}
+
+/* ---------- upload ---------- */
+const drop = $("drop"), fileInput = $("file");
+drop.onclick = (e) => { if (e.target.tagName !== "BUTTON") fileInput.click(); };
+fileInput.onchange = () => { upload([...fileInput.files]); fileInput.value = ""; };
+["dragenter", "dragover"].forEach((ev) =>
+  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) =>
+  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => upload([...e.dataTransfer.files]));
+
+function upload(files) {
+  for (const f of files) uploadOne(f);
+}
+
+// 업로드 진행률을 보려면 fetch 대신 XHR 이 필요하다.
+function uploadOne(file) {
+  const row = document.createElement("div");
+  row.className = "up-row";
+  row.innerHTML = `<span style="flex:none;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${
+    esc(file.name)}</span><div class="meter"><i style="width:0"></i></div><span class="num">0%</span>`;
+  $("upRows").appendChild(row);
+  const bar = row.querySelector(".meter > i"), label = row.querySelector(".num");
+
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("options", "{}");
+
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", API + "/v1/jobs");
+  if (apiKey) xhr.setRequestHeader("x-api-key", apiKey);
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round((e.loaded / e.total) * 100);
+    bar.style.width = pct + "%";
+    label.textContent = pct + "%";
+  };
+  xhr.onload = () => {
+    row.remove();
+    if (xhr.status === 202) { toast(`${file.name} 큐에 넣었습니다`); refresh(); }
+    else {
+      let d = xhr.statusText;
+      try { d = JSON.parse(xhr.responseText).detail || d; } catch (e) { /* JSON 아님 */ }
+      toast(`${file.name} 실패: ${d}`);
+    }
+  };
+  xhr.onerror = () => { row.remove(); toast(`${file.name} 업로드 실패`); };
+  xhr.send(fd);
+}
+
+/* ---------- controls ---------- */
+$("runNow").onclick = async () => {
+  try { await api("/v1/control", { method: "POST", headers: { "content-type": "application/json" },
+                                   body: JSON.stringify({ override_minutes: 60 }) });
+        toast("60분간 스케줄을 무시하고 처리합니다"); refresh(); }
+  catch (e) { toast(e.message); }
+};
+$("restore").onclick = async () => {
+  try { await api("/v1/control", { method: "POST", headers: { "content-type": "application/json" },
+                                   body: JSON.stringify({ override_minutes: 0 }) });
+        toast("원래 스케줄로 돌아갑니다"); refresh(); }
+  catch (e) { toast(e.message); }
+};
+$("settingsBtn").onclick = openSettings;
+$("pauseBtn").onclick = async () => {
+  try { await api("/v1/control", { method: "POST", headers: { "content-type": "application/json" },
+                                   body: JSON.stringify({ pause: !paused }) });
+        toast(paused ? "워커를 재개했습니다" : "워커를 멈췄습니다"); refresh(); }
+  catch (e) { toast(e.message); }
+};
+
+/* ---------- poll loop ---------- */
+$("host").textContent = location.host;
+
+async function refresh() {
+  try {
+    const [h, jobs] = await Promise.all([api("/v1/health"), api("/v1/jobs?limit=50")]);
+    renderHealth(h);
+    const stale = Date.now() - lastFullRender > 60000;
+    renderJobs(jobs.jobs, stale);
+    if (stale) lastFullRender = Date.now();
+    $("dot").className = "dot live";
+    $("connTxt").textContent = "연결됨";
+  } catch (e) {
+    $("dot").className = "dot down";
+    $("connTxt").textContent = "연결 끊김";
+  }
+}
+
+// 처리 중인 잡이 있으면 자주, 조용하면 드물게 — 밤새 켜둬도 부담 없게.
+let timer = null;
+let lastFullRender = 0;
+function schedule() {
+  clearTimeout(timer);
+  if (!$("autoRefresh").checked) return;
+  const busy = document.querySelector(".pill.running, .pill.canceling");
+  timer = setTimeout(async () => { await refresh(); schedule(); }, busy ? 1500 : 5000);
+}
+$("autoRefresh").onchange = schedule;
+
+refresh().then(schedule);
+</script>
+</body>
+</html>

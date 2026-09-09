@@ -88,10 +88,35 @@ def _unlink(path_text: str) -> int | None:
     return size
 
 
-def reclaim_one(store: JobStore, job_id: str, audio_path: str) -> int | None:
+def resolve_upload(settings: Settings, audio_path: str) -> Path | None:
+    """Where a job's audio actually lives *now*, or None if it is not there.
+
+    ``audio_path`` is absolute and recorded at submission time, so it goes stale
+    the moment the data directory moves - and following a stale one would have
+    this sweep deleting files out of whatever directory used to hold them. Names
+    carry a uuid prefix and are unique, so the name is the durable half of that
+    path. Resolving through the upload dir also gives retention an invariant
+    worth having: it can only ever delete inside the directory the server owns.
+    """
+    name = Path(audio_path).name
+    if not name:
+        return None
+    candidate = settings.upload_dir / name
+    return candidate if candidate.exists() else None
+
+
+def reclaim_one(
+    settings: Settings, store: JobStore, job_id: str, audio_path: str
+) -> int | None:
     """Delete a job's upload and record it. Returns bytes freed, or None if the
     file survived and should be retried later."""
-    freed = _unlink(audio_path)
+    target = resolve_upload(settings, audio_path)
+    if target is None:
+        # Nothing of ours left to delete - already swept, or the data dir moved
+        # out from under this row. Either way the job is done holding audio.
+        store.mark_audio_deleted(job_id)
+        return 0
+    freed = _unlink(str(target))
     if freed is None:
         return None
     store.mark_audio_deleted(job_id)
@@ -107,7 +132,7 @@ def sweep(
 
     if settings.delete_audio_on_success:
         for row in store.transcribed_audio(BATCH):
-            freed = reclaim_one(store, row["id"], row["audio_path"])
+            freed = reclaim_one(settings, store, row["id"], row["audio_path"])
             if freed is not None:
                 report.transcribed += 1
                 report.freed_bytes += freed
@@ -116,7 +141,7 @@ def sweep(
     if days > 0:
         cutoff = cutoff_iso(days, now)
         for row in store.expired_audio(cutoff, BATCH):
-            freed = reclaim_one(store, row["id"], row["audio_path"])
+            freed = reclaim_one(settings, store, row["id"], row["audio_path"])
             if freed is None:
                 continue
             report.expired += 1

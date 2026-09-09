@@ -236,7 +236,7 @@ class Worker(threading.Thread):
     def _reclaim_audio(self, job_id: str, audio_path: str) -> None:
         if not self.settings.delete_audio_on_success:
             return
-        freed = retention.reclaim_one(self.store, job_id, audio_path)
+        freed = retention.reclaim_one(self.settings, self.store, job_id, audio_path)
         if freed is None:
             log.warning("job %s: audio still locked; leaving it for the sweep", job_id)
         else:

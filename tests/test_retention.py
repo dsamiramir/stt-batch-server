@@ -237,3 +237,51 @@ def test_migration_adds_the_column_to_an_older_database(tmp_path: Path) -> None:
         assert store.get("old")["audio_deleted_at"] is not None
     finally:
         store.close()
+
+
+# --- a moved data directory --------------------------------------------------
+# audio_path is absolute and written at submission time, so it goes stale the
+# moment the data dir moves. Retention must follow the current dir, never the
+# recorded one - otherwise it deletes files out of the old location.
+def test_a_stale_path_never_deletes_outside_the_upload_dir(env, tmp_path) -> None:
+    settings, store = env
+    old_dir = tmp_path / "old-home" / "uploads"
+    old_dir.mkdir(parents=True)
+    leftover = old_dir / "abc_call.wav"
+    leftover.write_bytes(b"x" * 2048)
+
+    here = _upload(settings, "abc_call.wav")
+    job = store.create(filename="call.wav", audio_path=leftover, options={})
+    store.update(job["id"], status=store_mod.DONE)
+
+    report = retention.sweep(settings, store)
+
+    assert leftover.exists(), "a path outside the upload dir is not ours to delete"
+    assert not here.exists(), "the copy in the live upload dir is the one to reclaim"
+    assert report.transcribed == 1
+
+
+def test_a_stale_path_with_nothing_on_disk_still_settles(env, tmp_path) -> None:
+    settings, store = env
+    job = store.create(
+        filename="gone.wav", audio_path=tmp_path / "elsewhere" / "xyz_gone.wav",
+        options={},
+    )
+    store.update(job["id"], status=store_mod.DONE)
+
+    assert retention.sweep(settings, store).transcribed == 1
+    assert store.get(job["id"])["audio_deleted_at"] is not None
+    assert retention.sweep(settings, store).deleted == 0, "and does not recur"
+
+
+def test_a_reclaimed_row_stops_shielding_its_file_from_the_orphan_sweep(env) -> None:
+    """After a move, the live copy is a file no *claiming* row points at."""
+    settings, store = env
+    job = _job(settings, store, "left_behind.wav", status=store_mod.DONE, age_days=9)
+    path = Path(job["audio_path"])
+    store.mark_audio_deleted(job["id"])  # marked, but the file is still here
+
+    report = retention.sweep(settings, store)
+
+    assert not path.exists()
+    assert report.orphans == 1

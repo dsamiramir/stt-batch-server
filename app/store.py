@@ -300,10 +300,16 @@ class JobStore:
         return [dict(r) for r in rows]
 
     def referenced_audio_paths(self) -> set[str]:
-        """Every upload path a job row still points at, for orphan detection."""
+        """Every upload a job row still lays claim to, for orphan detection.
+
+        A job that has already released its audio claims nothing, so its row
+        does not protect a file of that name from the orphan sweep. That is
+        what lets a leftover copy be cleaned up after the data dir moves.
+        """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT audio_path FROM jobs WHERE audio_path <> ''"
+                "SELECT audio_path FROM jobs "
+                "WHERE audio_path <> '' AND audio_deleted_at IS NULL"
             ).fetchall()
         return {r["audio_path"] for r in rows}
 

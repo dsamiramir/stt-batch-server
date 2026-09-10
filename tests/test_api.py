@@ -329,3 +329,57 @@ def test_listing_reports_positions_without_n_queries(client: TestClient, stereo_
     positions = [j["queue_position"] for j in body["jobs"]]
     assert all(p is not None for p in positions)
     assert sorted(positions) == list(range(1, len(positions) + 1))
+
+
+# --- duplicate submissions ---------------------------------------------------
+def _post(client: TestClient, wav: Path, **data):
+    with wav.open("rb") as fh:
+        return client.post(
+            "/v1/jobs", files={"file": (wav.name, fh, "audio/wav")}, data=data
+        )
+
+
+def test_resubmitting_a_client_ref_returns_the_existing_job(
+    client: TestClient, stereo_wav: Path, data_dir: Path
+) -> None:
+    first = _submit(client, stereo_wav, client_ref="conv-dup-1")
+    uploads_before = len(list((data_dir / "uploads").iterdir()))
+
+    again = _post(client, stereo_wav, client_ref="conv-dup-1")
+
+    assert again.status_code == 200, "새 잡이 아니므로 202 가 아니다"
+    body = again.json()
+    assert body["id"] == first["id"]
+    assert body["reused"] is True
+    assert body["queue_position"] is not None
+    assert len(list((data_dir / "uploads").iterdir())) == uploads_before, \
+        "중복 제출은 업로드 파일을 새로 쓰지 않는다"
+
+
+def test_force_new_queues_a_second_job(client: TestClient, stereo_wav: Path) -> None:
+    first = _submit(client, stereo_wav, client_ref="conv-dup-2")
+    second = _submit(client, stereo_wav, client_ref="conv-dup-2", force_new="true")
+    assert second["id"] != first["id"]
+    assert second["reused"] is False
+
+
+def test_a_canceled_job_can_be_resubmitted(client: TestClient, stereo_wav: Path) -> None:
+    first = _submit(client, stereo_wav, client_ref="conv-dup-3")
+    client.delete(f"/v1/jobs/{first['id']}")
+    second = _submit(client, stereo_wav, client_ref="conv-dup-3")
+    assert second["id"] != first["id"]
+
+
+def test_jobs_without_client_ref_are_never_merged(client: TestClient, stereo_wav: Path) -> None:
+    a = _submit(client, stereo_wav)
+    b = _submit(client, stereo_wav)
+    assert a["id"] != b["id"]
+
+
+def test_listing_filters_by_client_ref(client: TestClient, stereo_wav: Path) -> None:
+    job = _submit(client, stereo_wav, client_ref="conv-list-1")
+    _submit(client, stereo_wav, client_ref="conv-list-2")
+
+    body = client.get("/v1/jobs", params={"client_ref": "conv-list-1"}).json()
+
+    assert [j["id"] for j in body["jobs"]] == [job["id"]]

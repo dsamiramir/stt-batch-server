@@ -30,7 +30,7 @@ class TranscribeOptions(BaseModel):
 
 
 # Filled in by the endpoint rather than read straight off the DB row.
-_DERIVED_FIELDS = ("result_url", "queue_position", "eta_seconds")
+_DERIVED_FIELDS = ("result_url", "queue_position", "eta_seconds", "reused")
 
 
 class JobOut(BaseModel):
@@ -63,6 +63,11 @@ class JobOut(BaseModel):
         description="Rough seconds until this job finishes, from the recent "
                     "average. Null when there is nothing to estimate from.",
     )
+    reused: bool = Field(
+        default=False,
+        description="True when a submission was answered with an existing job "
+                    "for the same client_ref instead of queuing a new one.",
+    )
 
     @classmethod
     def from_row(
@@ -70,6 +75,7 @@ class JobOut(BaseModel):
         row: dict[str, Any],
         queue_position: int | None = None,
         eta_seconds: int | None = None,
+        reused: bool = False,
     ) -> "JobOut":
         data = {k: row.get(k) for k in cls.model_fields if k not in _DERIVED_FIELDS}
         data["result_url"] = (
@@ -77,6 +83,7 @@ class JobOut(BaseModel):
         )
         data["queue_position"] = queue_position
         data["eta_seconds"] = eta_seconds
+        data["reused"] = reused
         return cls(**data)
 
 

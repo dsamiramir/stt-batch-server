@@ -76,8 +76,9 @@ HTTP 핸들러 안에서 전사를 호출해 그 응답을 만들려는 설계�
 | `file` | 파일 | 필수 | 오디오. 멀티채널 그대로 올리면 됩니다. 최대 4096 MB |
 | `options` | 문자열 | | **JSON을 문자열로 직렬화해서** 넣는 폼 필드. 아래 표 참조 |
 | `callback_url` | 문자열 | | 완료·실패·취소 시 POST 받을 주소 |
-| `client_ref` | 문자열 | | 본인 쪽 ID. 상태·콜백·결과에 그대로 실려 돌아옴 |
+| `client_ref` | 문자열 | | 본인 쪽 ID. 상태·콜백·결과에 그대로 실려 돌아옴. **중복 제출 판별 기준**이니 콜마다 고유한 값을 넣으세요 |
 | `priority` | 정수 | | 클수록 먼저. 기본 0 |
+| `force_new` | 불린 | | `true`면 같은 `client_ref`의 잡이 있어도 새로 만듦. 기본 `false` |
 
 `options`에 넣을 수 있는 키는 **아래가 전부**입니다. 모르는 키를 넣으면 422로 거절됩니다.
 
@@ -92,7 +93,11 @@ HTTP 핸들러 안에서 전사를 호출해 그 응답을 만들려는 설계�
 | `initial_prompt` | 문자열 | | 도메인 용어 힌트. 예: `"상담원과 고객의 통화 녹취입니다."` |
 | `temperature` | 실수 0.0~1.0 | 0.0 | |
 
-**응답 `202`** — 아래 "잡 객체" 형식.
+**응답 `202`** — 새 잡. 아래 "잡 객체" 형식.
+
+**응답 `200`** — 같은 `client_ref`의 잡이 이미 대기·처리 중이거나 끝나 있어서 **새로 만들지 않고 그 잡을 돌려준 것**입니다.
+형식은 같고 `reused: true`가 붙습니다. 받은 `id`를 그대로 추적하면 됩니다. 두 코드 모두 성공으로 처리하세요.
+실패·취소된 잡은 막지 않으므로 재시도는 새 잡이 됩니다. 옵션을 바꿔 다시 돌리려면 `force_new=true`.
 
 ```bash
 curl -X POST http://172.17.15.85:8760/v1/jobs -F "file=@call.wav" -F 'options={"language":"ko","channel_names":["agent","customer"]}' -F "callback_url=http://myserver:9000/stt-done" -F "client_ref=ticket-42"
@@ -122,7 +127,8 @@ curl -X POST http://172.17.15.85:8760/v1/jobs -F "file=@call.wav" -F 'options={"
   "audio_deleted_at": null,
   "result_url": null,
   "queue_position": null,
-  "eta_seconds": null
+  "eta_seconds": null,
+  "reused": false
 }
 ```
 
@@ -200,6 +206,9 @@ curl -X POST http://172.17.15.85:8760/v1/jobs -F "file=@call.wav" -F 'options={"
 이미 끝난 잡이면 현재 상태를 그대로 돌려줍니다(에러 아님).
 
 ### `GET /v1/jobs` — 목록
+
+`status`·`client_ref`로 거를 수 있습니다. `?client_ref=<내 ID>`로 조회하면 같은 콜을 이미 올렸는지
+업로드 전에 확인할 수 있습니다.
 
 쿼리: `status`(`queued|running|done|failed|canceled`), `limit`(1~500, 기본 50), `offset`.
 
@@ -493,6 +502,8 @@ curl -X POST http://172.17.15.85:8760/v1/control -H "content-type: application/j
     업로드해야 합니다.
 12. **한 번에 수백 건을 몰아 제출** — 받아주긴 하지만 한 번에 한 잡씩 순차 처리라 뒤쪽은 몇 시간을
     기다립니다. 급한 건은 `priority`를 올려 앞으로 보내세요.
+13. **`client_ref` 없이 제출** — 중복을 알아볼 기준이 없어 같은 콜을 다시 올리면 매번 새로 전사됩니다.
+    콜 ID를 넣으세요. 넣었다면 재시도·중복 실행은 서버가 기존 잡으로 흡수합니다(`200`, `reused: true`).
 
 ## 7. 이 서버가 못 하는 것
 

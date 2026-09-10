@@ -18,6 +18,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
 )
 from fastapi.concurrency import run_in_threadpool
@@ -131,6 +132,30 @@ def _eta_seconds(
     return None
 
 
+def _job_view(row: dict[str, Any], *, reused: bool = False) -> JobOut:
+    """One job with its live place in line, as the single-job endpoints show it."""
+    position = None
+    if row["status"] == store_mod.QUEUED:
+        position = state.store.queue_positions().get(row["id"])
+    average = state.store.average_job_seconds()
+    return JobOut.from_row(
+        row,
+        queue_position=position,
+        eta_seconds=_eta_seconds(row, position, average),
+        reused=reused,
+    )
+
+
+def _reuse(row: dict[str, Any], response: Response) -> JobOut:
+    """Answer a resubmission with the job that already covers it."""
+    response.status_code = 200
+    log.info(
+        "duplicate submission for client_ref=%s -> existing job %s (%s)",
+        row.get("client_ref"), row["id"], row["status"],
+    )
+    return _job_view(row, reused=True)
+
+
 def _get_job_or_404(job_id: str) -> dict[str, Any]:
     job = state.store.get(job_id)
     if job is None:
@@ -173,19 +198,49 @@ def health() -> HealthOut:
     )
 
 
-@app.post("/v1/jobs", response_model=JobOut, status_code=202, tags=["jobs"])
+@app.post(
+    "/v1/jobs",
+    response_model=JobOut,
+    status_code=202,
+    tags=["jobs"],
+    responses={200: {
+        "model": JobOut,
+        "description": "Resubmission: a job for this client_ref is already "
+                       "queued, running or done, and is returned as-is.",
+    }},
+)
 async def submit_job(
+    response: Response,
     file: UploadFile = File(..., description="Audio file; multi-channel is fine."),
     options: str = Form("{}", description="JSON object of TranscribeOptions."),
     callback_url: str = Form("", description="POSTed a JSON summary when finished."),
     client_ref: str = Form("", description="Your own id, echoed back everywhere."),
     priority: int = Form(0, description="Higher runs first."),
+    force_new: bool = Form(
+        False,
+        description="Queue a fresh job even when one for this client_ref is "
+                    "already queued, running or done.",
+    ),
     _: None = Auth,
 ) -> JobOut:
+    """Queue audio for transcription.
+
+    Submitting a ``client_ref`` that already has a queued, running or done job
+    returns that job with HTTP 200 instead of transcribing the same audio again.
+    """
     try:
         parsed = TranscribeOptions.model_validate(json.loads(options or "{}"))
     except (json.JSONDecodeError, ValidationError) as exc:
         raise HTTPException(status_code=422, detail=f"bad options: {exc}") from exc
+
+    dedupe = settings.dedupe_client_ref and bool(client_ref) and not force_new
+    if dedupe:
+        # Cheap pre-check, so a resubmission costs no disk write at all. The
+        # authoritative check is the atomic one once the upload has landed.
+        existing = state.store.find_reusable(client_ref)
+        if existing is not None:
+            await file.close()
+            return _reuse(existing, response)
 
     limit = settings.max_upload_mb * 1024 * 1024
     stem = _safe_name(file.filename or "audio")
@@ -212,7 +267,7 @@ async def submit_job(
         dest.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail="uploaded file is empty")
 
-    job = state.store.create(
+    fields: dict[str, Any] = dict(
         filename=file.filename or stem,
         audio_path=dest,
         options=parsed.as_overrides(),
@@ -220,6 +275,14 @@ async def submit_job(
         client_ref=client_ref or None,
         priority=priority,
     )
+    if dedupe:
+        job, created = state.store.create_or_reuse(**fields)
+        if not created:
+            # Lost a race to an identical submission; theirs stands.
+            dest.unlink(missing_ok=True)
+            return _reuse(job, response)
+    else:
+        job = state.store.create(**fields)
     state.worker.nudge()
     log.info("queued job %s (%s, %.1f MB)", job["id"], job["filename"], written / 1e6)
     return JobOut.from_row(job)
@@ -230,9 +293,14 @@ async def list_jobs(
     status: str | None = Query(None, description="queued|running|done|failed|canceled"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    client_ref: str | None = Query(
+        None, description="Only jobs submitted with this client_ref."
+    ),
     _: None = Auth,
 ) -> JobList:
-    rows = state.store.list(status=status, limit=limit, offset=offset)
+    rows = state.store.list(
+        status=status, limit=limit, offset=offset, client_ref=client_ref
+    )
     positions = state.store.queue_positions()
     average = state.store.average_job_seconds()
     backlog = int(len(positions) * average) if average and positions else None
@@ -252,14 +320,7 @@ async def list_jobs(
 
 @app.get("/v1/jobs/{job_id}", response_model=JobOut, tags=["jobs"])
 async def get_job(job_id: str, _: None = Auth) -> JobOut:
-    row = _get_job_or_404(job_id)
-    position = None
-    if row["status"] == store_mod.QUEUED:
-        position = state.store.queue_positions().get(job_id)
-    average = state.store.average_job_seconds()
-    return JobOut.from_row(
-        row, queue_position=position, eta_seconds=_eta_seconds(row, position, average)
-    )
+    return _job_view(_get_job_or_404(job_id))
 
 
 @app.get("/v1/jobs/{job_id}/result", tags=["jobs"])

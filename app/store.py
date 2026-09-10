@@ -19,6 +19,9 @@ CANCELING = "canceling"
 CANCELED = "canceled"
 
 ACTIVE_STATES = (QUEUED, RUNNING, CANCELING)
+# States that already answer a request, so a resubmission gets this job back.
+# Canceling is left out: it is on its way to canceled.
+REUSABLE_STATES = (DONE, RUNNING, QUEUED)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -84,6 +87,12 @@ class JobStore:
         for column, decl in _ADDED_COLUMNS.items():
             if column not in present:
                 self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {decl}")
+        # Dedupe looks jobs up by client_ref. Index it only when the column is
+        # there: a table old or hand-made enough may not have it.
+        if "client_ref" in present:
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_client_ref ON jobs(client_ref)"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -114,6 +123,19 @@ class JobStore:
             )
             self._conn.commit()
         return self.get(job_id)  # type: ignore[return-value]
+
+    def create_or_reuse(self, **fields: Any) -> tuple[dict[str, Any], bool]:
+        """Insert a job unless one for the same client_ref already covers it.
+
+        The check and the insert share one lock hold, so identical submissions
+        racing each other still produce a single job. Returns the job and
+        whether it was newly created.
+        """
+        with self._lock:
+            existing = self.find_reusable(fields.get("client_ref") or "")
+            if existing is not None:
+                return existing, False
+            return self.create(**fields), True
 
     def update(self, job_id: str, **fields: Any) -> None:
         unknown = set(fields) - _UPDATABLE
@@ -205,6 +227,26 @@ class JobStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def find_reusable(self, client_ref: str) -> dict[str, Any] | None:
+        """The job a resubmission of ``client_ref`` should get back, if any.
+
+        A finished transcript beats a job still in progress, and a running job
+        beats a queued one; among queued jobs the oldest is the one furthest
+        up the line. Failed and canceled jobs answer nothing, so they are left
+        for the retry the client is attempting.
+        """
+        if not client_ref:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE client_ref = ? AND status IN (?, ?, ?) "
+                "ORDER BY CASE status WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, "
+                "         created_at ASC "
+                "LIMIT 1",
+                (client_ref, *REUSABLE_STATES, DONE, RUNNING),
+            ).fetchone()
+        return dict(row) if row else None
+
     def status_of(self, job_id: str) -> str | None:
         with self._lock:
             row = self._conn.execute(
@@ -213,13 +255,23 @@ class JobStore:
         return row["status"] if row else None
 
     def list(
-        self, status: str | None = None, limit: int = 50, offset: int = 0
+        self,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        client_ref: str | None = None,
     ) -> list[dict[str, Any]]:
-        sql = "SELECT * FROM jobs"
+        clauses: list[str] = []
         params: list[Any] = []
         if status:
-            sql += " WHERE status = ?"
+            clauses.append("status = ?")
             params.append(status)
+        if client_ref:
+            clauses.append("client_ref = ?")
+            params.append(client_ref)
+        sql = "SELECT * FROM jobs"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params += [limit, offset]
         with self._lock:

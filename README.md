@@ -76,8 +76,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_task.ps1
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| `POST` | `/v1/jobs` | 오디오 업로드 → `202` + `job_id` |
-| `GET` | `/v1/jobs` | 잡 목록, 상태별 집계 |
+| `POST` | `/v1/jobs` | 오디오 업로드 → `202` + `job_id` (같은 `client_ref`의 잡이 살아 있으면 `200` + 기존 잡) |
+| `GET` | `/v1/jobs` | 잡 목록, 상태별 집계 (`status`, `client_ref`로 필터) |
 | `GET` | `/v1/jobs/{id}` | 상태·진행률·단계 |
 | `GET` | `/v1/jobs/{id}/result` | 완료된 전사 JSON |
 | `DELETE` | `/v1/jobs/{id}` | 취소 (대기 중이면 즉시, 처리 중이면 다음 세그먼트에서 중단) |
@@ -104,6 +104,16 @@ curl -X POST http://127.0.0.1:8760/v1/jobs -F "file=@call.wav" -F 'options={"lan
 `options`에 넣을 수 있는 값은 `language`, `beam_size`, `vad_filter`, `word_timestamps`,
 `condition_on_previous_text`, `initial_prompt`, `temperature`, `channel_names` 입니다.
 생략하면 서버 기본값을 씁니다.
+
+### 중복 제출
+
+같은 `client_ref`로 다시 제출했을 때 그 잡이 대기·처리 중이거나 이미 끝나 있으면, 새 잡을 만들지 않고
+**기존 잡을 `200`으로 돌려줍니다**(`reused: true`). 업로드 파일도 저장하지 않습니다. 동시에 들어온 같은 제출도
+하나만 남습니다. 실패·취소된 잡은 막지 않으므로 재시도는 그대로 새 잡이 됩니다.
+옵션을 바꿔 일부러 다시 돌리려면 `force_new=true`를 함께 보내세요. 기능 자체는 `STT_DEDUPE_CLIENT_REF=false`로 끕니다.
+
+`client_ref` 없는 제출은 비교할 기준이 없어 매번 새 잡이 됩니다. 녹취 ID처럼 콜마다 고유한 값을 넣으세요.
+업로드 전에 `GET /v1/jobs?client_ref=<ID>`로 이미 올렸는지 확인하면 전송 비용까지 아낄 수 있습니다.
 
 ### 콜백
 

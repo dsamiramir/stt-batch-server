@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     port: int = 8760
     api_key: str = ""
     max_upload_mb: int = 4096
+    # Answer a resubmission of the same client_ref with the job that already
+    # covers it (queued, running or done) instead of transcribing the audio
+    # again. Failed and canceled jobs never block a retry, and a client can
+    # still insist on a fresh job with force_new=true.
+    dedupe_client_ref: bool = True
 
     # --- model -------------------------------------------------------------
     model_size: str = "large-v3"

@@ -231,19 +231,22 @@ class JobStore:
         """The job a resubmission of ``client_ref`` should get back, if any.
 
         A finished transcript beats a job still in progress, and a running job
-        beats a queued one; among queued jobs the oldest is the one furthest
-        up the line. Failed and canceled jobs answer nothing, so they are left
-        for the retry the client is attempting.
+        beats a queued one. Among transcripts the newest wins, so a forced
+        re-run supersedes the one it redid; among queued jobs the oldest is the
+        one furthest up the line. Failed and canceled jobs answer nothing, so
+        they are left for the retry the client is attempting.
         """
         if not client_ref:
             return None
         with self._lock:
+            # rowid is submission order, and unlike created_at it never ties
+            # within the same second.
             row = self._conn.execute(
                 "SELECT * FROM jobs WHERE client_ref = ? AND status IN (?, ?, ?) "
                 "ORDER BY CASE status WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, "
-                "         created_at ASC "
+                "         CASE WHEN status = ? THEN -rowid ELSE rowid END "
                 "LIMIT 1",
-                (client_ref, *REUSABLE_STATES, DONE, RUNNING),
+                (client_ref, *REUSABLE_STATES, DONE, RUNNING, DONE),
             ).fetchone()
         return dict(row) if row else None
 

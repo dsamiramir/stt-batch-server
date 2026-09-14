@@ -110,7 +110,9 @@ curl -X POST http://127.0.0.1:8760/v1/jobs -F "file=@call.wav" -F 'options={"lan
 같은 `client_ref`로 다시 제출했을 때 그 잡이 대기·처리 중이거나 이미 끝나 있으면, 새 잡을 만들지 않고
 **기존 잡을 `200`으로 돌려줍니다**(`reused: true`). 업로드 파일도 저장하지 않습니다. 동시에 들어온 같은 제출도
 하나만 남습니다. 실패·취소된 잡은 막지 않으므로 재시도는 그대로 새 잡이 됩니다.
-옵션을 바꿔 일부러 다시 돌리려면 `force_new=true`를 함께 보내세요. 기능 자체는 `STT_DEDUPE_CLIENT_REF=false`로 끕니다.
+같은 콜을 일부러 다시 전사하려면 `force=true`를 함께 보내세요(예전 이름 `force_new`도 됩니다). 기존 잡은 그대로 두고
+같은 `client_ref`로 새 잡을 만들며, 새 잡이 끝나면 이후 재제출에는 새 결과가 돌아갑니다.
+기능 자체는 `STT_DEDUPE_CLIENT_REF=false`로 끕니다.
 
 `client_ref` 없는 제출은 비교할 기준이 없어 매번 새 잡이 됩니다. 녹취 ID처럼 콜마다 고유한 값을 넣으세요.
 업로드 전에 `GET /v1/jobs?client_ref=<ID>`로 이미 올렸는지 확인하면 전송 비용까지 아낄 수 있습니다.

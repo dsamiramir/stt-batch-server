@@ -78,7 +78,7 @@ HTTP 핸들러 안에서 전사를 호출해 그 응답을 만들려는 설계�
 | `callback_url` | 문자열 | | 완료·실패·취소 시 POST 받을 주소 |
 | `client_ref` | 문자열 | | 본인 쪽 ID. 상태·콜백·결과에 그대로 실려 돌아옴. **중복 제출 판별 기준**이니 콜마다 고유한 값을 넣으세요 |
 | `priority` | 정수 | | 클수록 먼저. 기본 0 |
-| `force_new` | 불린 | | `true`면 같은 `client_ref`의 잡이 있어도 새로 만듦. 기본 `false` |
+| `force` | 불린 | | `true`면 같은 `client_ref`의 잡이 대기·처리 중이거나 끝나 있어도 새 잡을 만듦(재처리). 기본 `false`. 예전 이름 `force_new`도 받음 |
 
 `options`에 넣을 수 있는 키는 **아래가 전부**입니다. 모르는 키를 넣으면 422로 거절됩니다.
 
@@ -97,7 +97,12 @@ HTTP 핸들러 안에서 전사를 호출해 그 응답을 만들려는 설계�
 
 **응답 `200`** — 같은 `client_ref`의 잡이 이미 대기·처리 중이거나 끝나 있어서 **새로 만들지 않고 그 잡을 돌려준 것**입니다.
 형식은 같고 `reused: true`가 붙습니다. 받은 `id`를 그대로 추적하면 됩니다. 두 코드 모두 성공으로 처리하세요.
-실패·취소된 잡은 막지 않으므로 재시도는 새 잡이 됩니다. 옵션을 바꿔 다시 돌리려면 `force_new=true`.
+실패·취소된 잡은 막지 않으므로 재시도는 새 잡이 됩니다.
+
+**재처리 (`force=true`)** — 같은 콜을 일부러 다시 전사할 때 씁니다. `client_ref`는 그대로 두고 새 `id`로 큐에 넣으며
+(`202`, `reused: false`), 기존 잡은 끊거나 지우지 않습니다. 새 잡이 끝나기 전까지는 같은 `client_ref`의 일반 제출에
+기존 결과가 돌아가고, 끝난 뒤에는 새 결과가 돌아갑니다. 기존 잡이 아직 대기 중이었다면 두 잡이 모두 돌아
+콜백도 두 번 오니 `job_id`로 구분하세요. `GET /v1/jobs?client_ref=`는 최신 잡이 맨 앞입니다.
 
 ```bash
 curl -X POST http://172.17.15.85:8760/v1/jobs -F "file=@call.wav" -F 'options={"language":"ko","channel_names":["agent","customer"]}' -F "callback_url=http://myserver:9000/stt-done" -F "client_ref=ticket-42"

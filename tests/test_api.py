@@ -356,11 +356,19 @@ def test_resubmitting_a_client_ref_returns_the_existing_job(
         "중복 제출은 업로드 파일을 새로 쓰지 않는다"
 
 
-def test_force_new_queues_a_second_job(client: TestClient, stereo_wav: Path) -> None:
-    first = _submit(client, stereo_wav, client_ref="conv-dup-2")
-    second = _submit(client, stereo_wav, client_ref="conv-dup-2", force_new="true")
+@pytest.mark.parametrize("flag", ["force", "force_new"])
+def test_force_queues_a_second_job_beside_the_first(
+    client: TestClient, stereo_wav: Path, flag: str
+) -> None:
+    ref = f"conv-dup-{flag}"
+    first = _submit(client, stereo_wav, client_ref=ref)
+    second = _submit(client, stereo_wav, client_ref=ref, **{flag: "true"})
+
     assert second["id"] != first["id"]
     assert second["reused"] is False
+    assert second["client_ref"] == ref, "재처리도 원래 client_ref 를 그대로 쓴다"
+    assert client.get(f"/v1/jobs/{first['id']}").json()["status"] == "queued", \
+        "force 는 기존 잡을 건드리지 않는다"
 
 
 def test_a_canceled_job_can_be_resubmitted(client: TestClient, stereo_wav: Path) -> None:

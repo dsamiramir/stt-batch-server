@@ -136,6 +136,20 @@ def test_a_transcript_beats_a_queued_duplicate(store: JobStore) -> None:
     assert store.find_reusable("conv-1")["id"] == done["id"]
 
 
+def test_a_forced_rerun_supersedes_the_transcript_it_redid(store: JobStore) -> None:
+    old, _ = _submit_ref(store, "conv-1")
+    store.update(old["id"], status=store_mod.DONE)
+    rerun = store.create(
+        filename="a.wav", audio_path=Path("/tmp/a.wav"), options={}, client_ref="conv-1"
+    )
+
+    # Until the re-run has a transcript of its own, the old one still answers.
+    assert store.find_reusable("conv-1")["id"] == old["id"]
+
+    store.update(rerun["id"], status=store_mod.DONE)
+    assert store.find_reusable("conv-1")["id"] == rerun["id"]
+
+
 def test_racing_identical_submissions_make_one_job(store: JobStore) -> None:
     import threading
 

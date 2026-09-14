@@ -216,24 +216,28 @@ async def submit_job(
     callback_url: str = Form("", description="POSTed a JSON summary when finished."),
     client_ref: str = Form("", description="Your own id, echoed back everywhere."),
     priority: int = Form(0, description="Higher runs first."),
-    force_new: bool = Form(
+    force: bool = Form(
         False,
         description="Queue a fresh job even when one for this client_ref is "
-                    "already queued, running or done.",
+                    "already queued, running or done. That job is left alone; "
+                    "once the new one is done, resubmissions get it instead.",
     ),
+    force_new: bool = Form(False, description="Older name for force."),
     _: None = Auth,
 ) -> JobOut:
     """Queue audio for transcription.
 
     Submitting a ``client_ref`` that already has a queued, running or done job
-    returns that job with HTTP 200 instead of transcribing the same audio again.
+    returns that job with HTTP 200 instead of transcribing the same audio again,
+    unless ``force`` asks for a fresh transcription.
     """
     try:
         parsed = TranscribeOptions.model_validate(json.loads(options or "{}"))
     except (json.JSONDecodeError, ValidationError) as exc:
         raise HTTPException(status_code=422, detail=f"bad options: {exc}") from exc
 
-    dedupe = settings.dedupe_client_ref and bool(client_ref) and not force_new
+    force = force or force_new
+    dedupe = settings.dedupe_client_ref and bool(client_ref) and not force
     if dedupe:
         # Cheap pre-check, so a resubmission costs no disk write at all. The
         # authoritative check is the atomic one once the upload has landed.
@@ -284,7 +288,10 @@ async def submit_job(
     else:
         job = state.store.create(**fields)
     state.worker.nudge()
-    log.info("queued job %s (%s, %.1f MB)", job["id"], job["filename"], written / 1e6)
+    log.info(
+        "queued job %s (%s, %.1f MB%s)", job["id"], job["filename"], written / 1e6,
+        ", forced" if force else "",
+    )
     return JobOut.from_row(job)
 
 

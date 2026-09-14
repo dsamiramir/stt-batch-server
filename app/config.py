@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # Answer a resubmission of the same client_ref with the job that already
     # covers it (queued, running or done) instead of transcribing the audio
     # again. Failed and canceled jobs never block a retry, and a client can
-    # still insist on a fresh job with force_new=true.
+    # still insist on a fresh job with force=true.
     dedupe_client_ref: bool = True
 
     # --- model -------------------------------------------------------------

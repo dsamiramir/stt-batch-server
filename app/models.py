@@ -20,6 +20,20 @@ class TranscribeOptions(BaseModel):
     word_timestamps: bool | None = None
     condition_on_previous_text: bool | None = None
     initial_prompt: str | None = None
+    hotwords: str | None = Field(
+        default=None,
+        description="Space-separated terms, added to the server's own list. "
+                    "Not a sentence, and not a long list: these sit in the "
+                    "decoder's previous-text slot and get read back as speech.",
+    )
+    hallucination_silence_threshold: float | None = Field(default=None, ge=0.0, le=30.0)
+    vad_min_silence_ms: int | None = Field(
+        default=None, ge=100, le=10_000,
+        description="Silence that ends a speech chunk. Below ~1500 Korean "
+                    "conversation is cut mid-thought and loses its punctuation.",
+    )
+    vad_speech_pad_ms: int | None = Field(default=None, ge=0, le=2_000)
+    vad_max_speech_sec: float | None = Field(default=None, ge=5.0, le=120.0)
     temperature: float | None = Field(default=None, ge=0.0, le=1.0)
     channel_names: list[str] | None = Field(
         default=None, description="Positional labels, e.g. ['agent', 'customer']."
@@ -34,6 +48,8 @@ _DERIVED_FIELDS = ("result_url", "queue_position", "eta_seconds", "reused")
 
 
 class JobOut(BaseModel):
+    submitted_server_version: str | None = None
+    processing_server_version: str | None = None
     id: str
     status: str
     priority: int = 0

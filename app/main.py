@@ -45,8 +45,9 @@ from .models import (
 from .schedule import WindowSpecError
 from .store import JobStore
 from .worker import Worker
+from .versioning import SERVER_VERSION
 
-VERSION = "0.1.0"
+VERSION = SERVER_VERSION
 CHUNK = 1024 * 1024
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _SAFE_NAME = re.compile(r"[^0-9A-Za-z가-힣._-]+")

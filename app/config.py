@@ -48,10 +48,27 @@ class Settings(BaseSettings):
     language: str = "ko"  # "" means auto-detect
     beam_size: int = 5
     vad_filter: bool = True
-    word_timestamps: bool = False
+    word_timestamps: bool = True
     condition_on_previous_text: bool = False
+    # 모델은 이 프롬프트의 문체를 모방한다. 구두점이 든 짧은 한 줄이 마침표와
+    # 쉼표를 되살리는 가장 싼 수단이지만, 그 문장이 발화로 베껴지기도 한다.
+    # 켜기 전에 scripts/transcript_metrics.py로 A/B를 돌려 볼 것.
     initial_prompt: str = ""
+    # 실제로 자꾸 오인식되는 고유명사만 넣는다. 이 목록은 디코더의 "직전 텍스트"
+    # 자리(initial_prompt와 같은 슬롯)에 들어가므로 길어질수록 그대로 발화로
+    # 베껴진다. 잡이 보낸 목록과 합집합으로 쓰이니 중복은 적어도 된다.
+    hotwords: str = "당근알바"
+    # 단어 시각이 켜져 있을 때, 이 초보다 긴 무음에 걸친 루프를 버린다.
+    hallucination_silence_threshold: float = 2.0
     temperature: float = 0.0
+
+    # --- VAD (faster-whisper가 무음을 걷어낼 때 쓰는 값) -------------------
+    # 이 값을 내리면 한국어 대화가 잘게 쪼개지고, 조각마다 문맥이 끊겨
+    # 구두점이 사라진다. faster-whisper 기본값과 같은 2000을 쓴다.
+    vad_min_silence_ms: int = 2000
+    vad_speech_pad_ms: int = 400
+    # 한 조각의 상한. Whisper의 디코딩 윈도와 같은 30초로 둔다.
+    vad_max_speech_sec: float = 30.0
 
     # --- multi-channel handling -------------------------------------------
     max_channels: int = 8

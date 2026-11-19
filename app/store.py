@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .versioning import SERVER_VERSION
+
 QUEUED = "queued"
 RUNNING = "running"
 DONE = "done"
@@ -53,13 +55,15 @@ CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
 _UPDATABLE = {
     "status", "priority", "result_path", "channels", "duration_sec", "progress",
     "stage", "error", "attempts", "rtf", "started_at", "finished_at", "options",
-    "audio_deleted_at",
+    "audio_deleted_at", "processing_server_version",
 }
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves an
 # existing table alone, so a database from an older build needs them bolted on.
 _ADDED_COLUMNS = {
     "audio_deleted_at": "TEXT",
+    "submitted_server_version": "TEXT",
+    "processing_server_version": "TEXT",
 }
 
 
@@ -113,12 +117,12 @@ class JobStore:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO jobs (id, status, priority, filename, audio_path, "
-                "options, callback_url, client_ref, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "options, callback_url, client_ref, created_at, submitted_server_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     job_id, QUEUED, priority, filename, str(audio_path),
                     json.dumps(options, ensure_ascii=False), callback_url,
-                    client_ref, utcnow(),
+                    client_ref, utcnow(), SERVER_VERSION,
                 ),
             )
             self._conn.commit()

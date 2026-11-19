@@ -20,6 +20,7 @@ from . import store as store_mod
 from .config import Settings
 from .engine import Cancelled, Engine
 from .store import JobStore
+from .versioning import SERVER_VERSION
 
 log = logging.getLogger("stt.worker")
 
@@ -251,6 +252,7 @@ class Worker(threading.Thread):
         log.info("job %s start: %s", job_id, job["filename"])
 
         try:
+            self.store.update(job_id, processing_server_version=SERVER_VERSION)
             if not path.exists():
                 raise FileNotFoundError(f"audio file missing: {path}")
 
@@ -425,6 +427,8 @@ class Worker(threading.Thread):
         )
         return {
             "job_id": job["id"],
+            "server_version": SERVER_VERSION,
+            "submitted_server_version": job.get("submitted_server_version"),
             "filename": job["filename"],
             "client_ref": job.get("client_ref"),
             "model": self.settings.model_size,
@@ -451,6 +455,8 @@ class Worker(threading.Thread):
             return
         payload = {
             "job_id": job_id,
+            "server_version": job.get("processing_server_version"),
+            "submitted_server_version": job.get("submitted_server_version"),
             "status": job["status"],
             "client_ref": job.get("client_ref"),
             "filename": job.get("filename"),

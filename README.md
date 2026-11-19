@@ -7,7 +7,7 @@ Gemini STT 같은 종량제 API 대신, 평일 밤·주말처럼 컴퓨터가 �
   타임스탬프 기준으로 병합합니다. diarization 없이 화자 구분이 정확합니다.
 - **오프피크 스케줄링** — 지정한 시간창 안에서, 그리고 GPU가 실제로 놀고 있을 때만 큐를 소진합니다.
 - **비동기 잡 큐** — 업로드 즉시 `job_id`를 돌려주고, 클라이언트는 폴링하거나 웹훅 콜백을 받습니다.
-- 외부 ffmpeg 바이너리 불필요(PyAV 내장), CUDA 툴킷·cuDNN 별도 설치 불필요(CTranslate2 내장).
+- 외부 ffmpeg 바이너리 불필요(PyAV 내장). Windows에서는 `uv sync`가 CUDA 12.8 cuBLAS와 cuDNN 9를 가상환경에 설치합니다. NVIDIA 드라이버는 별도로 필요합니다.
 
 ## 검증된 환경
 
@@ -49,6 +49,11 @@ uv venv --python 3.11
 ```bash
 uv sync
 ```
+
+Windows GPU 실행에 필요한 DLL은 NVIDIA 공식 Python 패키지로 설치하고, 모델을
+불러오기 전에 이 프로세스의 DLL 검색 경로에 등록합니다. 시스템 PATH나 다른 서버의
+가상환경은 바꾸지 않습니다. `nvidia-smi`가 성공해도 cuBLAS DLL이 없으면 실제 전사에서
+`cublas64_12.dll is not found or cannot be loaded`가 발생할 수 있습니다.
 
 `.env.example`을 `.env`로 복사해 필요한 값만 고칩니다. 모든 설정은 `STT_` 접두사 환경변수로도 줄 수 있습니다.
 
@@ -102,8 +107,20 @@ curl -X POST http://127.0.0.1:8760/v1/jobs -F "file=@call.wav" -F 'options={"lan
 ```
 
 `options`에 넣을 수 있는 값은 `language`, `beam_size`, `vad_filter`, `word_timestamps`,
-`condition_on_previous_text`, `initial_prompt`, `temperature`, `channel_names` 입니다.
-생략하면 서버 기본값을 씁니다.
+`condition_on_previous_text`, `initial_prompt`, `hotwords`, `hallucination_silence_threshold`,
+`temperature`, `channel_names`, `vad_min_silence_ms`, `vad_speech_pad_ms`, `vad_max_speech_sec`
+입니다. 생략하면 서버 기본값을 씁니다. `hotwords`는 서버 목록에 더해지고, 짧게 유지해야
+합니다. 길면 그 용어가 그대로 발화로 베껴집니다.
+
+전사 품질이 의심되면 서버를 건드리기 전에 이미 쌓인 결과를 재 보세요.
+
+```bash
+python scripts/transcript_metrics.py --by week --sample 600
+```
+
+구두점으로 끝나는 세그먼트 비율(`punct%`), 한두 음절 조각 비율(`frag%`), 1초 미만
+세그먼트 비율(`<1s%`), 평균 세그먼트 길이(`mean s`), 프롬프트를 베낀 줄 수(`echo`)가
+나옵니다. 디코딩 경로를 고친 뒤에는 이 다섯 숫자를 전후로 비교하세요.
 
 ### 중복 제출
 
@@ -261,3 +278,12 @@ API 테스트는 "지금"을 제외한 시간창을 주입해 워커가 잡을 �
 - `STT_LANGUAGE`를 비우면 채널마다 언어를 자동 판별합니다. 한국어만 다룬다면 `ko`로 고정하는 쪽이
   짧은 발화에서 오판이 없습니다.
 - 업로드 상한은 `STT_MAX_UPLOAD_MB`(기본 4GB)입니다.
+
+
+## 서버·전사 버전 추적
+
+`GET /v1/health`의 `version`은 시작 시 고정한 `0.1.0+<빌드 지문>`이다. app 아래 Python 소스·pyproject와 주요 STT 의존성 버전으로 계산한다. 미커밋 코드도 구분하며 경로·환경변수·비밀값은 포함하지 않는다. 서버 코드를 바꾼 뒤에는 재시작해야 새 버전이 된다.
+
+잡 응답의 `submitted_server_version`은 제출 당시 서버, `processing_server_version`은 마지막 실제 처리 시도 서버다. 대기 도중 서버를 교체해도 둘을 혼동하지 않는다. 전사 JSON의 `server_version`과 완료·실패 콜백의 `server_version`은 실제 처리 버전이다. 결과 파일에 저장하므로 재시작·잡 재사용 후에도 과거 결과 버전은 바뀌지 않는다. 과거 잡·결과에 없던 버전은 null/미상으로 두며 현재 버전으로 소급하지 않는다. 기존 SQLite에는 nullable 열만 자동 추가한다.
+
+QMS 같은 호출자는 health 버전을 과거 전사에 붙이지 말고 결과 JSON의 `server_version`을 저장해야 한다. 빌드 지문은 코드·라이브러리 식별자이며 모델 가중치·환경 설정 전체가 같다는 보증은 아니다. 품질 비교 시 결과의 engine·model과 요청 옵션도 함께 확인한다.

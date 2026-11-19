@@ -66,6 +66,25 @@ def test_unknown_job_is_404(client: TestClient) -> None:
     assert client.get("/v1/jobs/does-not-exist/result").status_code == 404
 
 
+def test_hotwords_are_accepted_and_unknown_keys_are_not(client: TestClient, stereo_wav: Path) -> None:
+    with stereo_wav.open("rb") as fh:
+        response = client.post(
+            "/v1/jobs",
+            files={"file": (stereo_wav.name, fh, "audio/wav")},
+            data={
+                "options": json.dumps(
+                    {
+                        "language": "ko",
+                        "word_timestamps": True,
+                        "hotwords": "당근 당근페이 비즈니스 비즈프로필",
+                        "hallucination_silence_threshold": 2,
+                    }
+                )
+            },
+        )
+    assert response.status_code == 202, response.text
+
+
 def test_bad_options_are_rejected(client: TestClient, stereo_wav: Path) -> None:
     with stereo_wav.open("rb") as fh:
         response = client.post(

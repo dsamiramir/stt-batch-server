@@ -7,7 +7,7 @@ Gemini STT 같은 종량제 API 대신, 평일 밤·주말처럼 컴퓨터가 �
   타임스탬프 기준으로 병합합니다. diarization 없이 화자 구분이 정확합니다.
 - **오프피크 스케줄링** — 지정한 시간창 안에서, 그리고 GPU가 실제로 놀고 있을 때만 큐를 소진합니다.
 - **비동기 잡 큐** — 업로드 즉시 `job_id`를 돌려주고, 클라이언트는 폴링하거나 웹훅 콜백을 받습니다.
-- 외부 ffmpeg 바이너리 불필요(PyAV 내장), CUDA 툴킷·cuDNN 별도 설치 불필요(CTranslate2 내장).
+- 외부 ffmpeg 바이너리 불필요(PyAV 내장). Windows에서는 `uv sync`가 CUDA 12.8 cuBLAS와 cuDNN 9를 가상환경에 설치합니다. NVIDIA 드라이버는 별도로 필요합니다.
 
 ## 검증된 환경
 
@@ -49,6 +49,11 @@ uv venv --python 3.11
 ```bash
 uv sync
 ```
+
+Windows GPU 실행에 필요한 DLL은 NVIDIA 공식 Python 패키지로 설치하고, 모델을
+불러오기 전에 이 프로세스의 DLL 검색 경로에 등록합니다. 시스템 PATH나 다른 서버의
+가상환경은 바꾸지 않습니다. `nvidia-smi`가 성공해도 cuBLAS DLL이 없으면 실제 전사에서
+`cublas64_12.dll is not found or cannot be loaded`가 발생할 수 있습니다.
 
 `.env.example`을 `.env`로 복사해 필요한 값만 고칩니다. 모든 설정은 `STT_` 접두사 환경변수로도 줄 수 있습니다.
 
@@ -102,8 +107,20 @@ curl -X POST http://127.0.0.1:8760/v1/jobs -F "file=@call.wav" -F 'options={"lan
 ```
 
 `options`에 넣을 수 있는 값은 `language`, `beam_size`, `vad_filter`, `word_timestamps`,
-`condition_on_previous_text`, `initial_prompt`, `temperature`, `channel_names` 입니다.
-생략하면 서버 기본값을 씁니다.
+`condition_on_previous_text`, `initial_prompt`, `hotwords`, `hallucination_silence_threshold`,
+`temperature`, `channel_names`, `vad_min_silence_ms`, `vad_speech_pad_ms`, `vad_max_speech_sec`
+입니다. 생략하면 서버 기본값을 씁니다. `hotwords`는 서버 목록에 더해지고, 짧게 유지해야
+합니다. 길면 그 용어가 그대로 발화로 베껴집니다.
+
+전사 품질이 의심되면 서버를 건드리기 전에 이미 쌓인 결과를 재 보세요.
+
+```bash
+python scripts/transcript_metrics.py --by week --sample 600
+```
+
+구두점으로 끝나는 세그먼트 비율(`punct%`), 한두 음절 조각 비율(`frag%`), 1초 미만
+세그먼트 비율(`<1s%`), 평균 세그먼트 길이(`mean s`), 프롬프트를 베낀 줄 수(`echo`)가
+나옵니다. 디코딩 경로를 고친 뒤에는 이 다섯 숫자를 전후로 비교하세요.
 
 ### 중복 제출
 

@@ -34,6 +34,8 @@ _DERIVED_FIELDS = ("result_url", "queue_position", "eta_seconds", "reused")
 
 
 class JobOut(BaseModel):
+    submitted_server_version: str | None = None
+    processing_server_version: str | None = None
     id: str
     status: str
     priority: int = 0
